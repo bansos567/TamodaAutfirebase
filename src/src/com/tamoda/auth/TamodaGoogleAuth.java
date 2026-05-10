@@ -1,17 +1,15 @@
 package com.tamoda.auth;
 
 import android.app.Activity;
-import android.content.Context;
 import android.content.Intent;
 import java.lang.reflect.Method;
-import java.lang.reflect.Field;
 import com.google.appinventor.components.annotations.*;
 import com.google.appinventor.components.common.ComponentCategory;
 import com.google.appinventor.components.runtime.*;
 
 @DesignerComponent(
-    version = 1,
-    description = "Tamoda Pure Google Auth. Login Native super ringan (Tanpa Jar/Bentrok) untuk ditarik ID Token-nya ke Firebase Web.",
+    version = 2,
+    description = "Tamoda Google Auth V2 - Debug Mode. Menampilkan Kode Error jika gagal.",
     category = ComponentCategory.EXTENSION,
     nonVisible = true,
     iconName = ""
@@ -19,28 +17,24 @@ import com.google.appinventor.components.runtime.*;
 @SimpleObject(external = true)
 public class TamodaGoogleAuth extends AndroidNonvisibleComponent implements ActivityResultListener {
     
-    private ComponentContainer container;
-    private Activity activity;
+    private final Activity activity;
     private Object mGoogleSignInClient;
     private static final int RC_SIGN_IN = 9001;
 
     public TamodaGoogleAuth(ComponentContainer container) {
         super(container.$form());
-        this.container = container;
         this.activity = (Activity) container.$context();
     }
 
-    @SimpleFunction(description = "Mulai proses login Google. Masukkan Web Client ID dari Firebase Console.")
+    @SimpleFunction(description = "Mulai proses login. Gunakan Web Client ID dari Firebase!")
     public void StartLogin(String webClientId) {
         try {
-            // Menggunakan Reflection untuk meminjam library GMS bawaan HP/Kodular
             Class<?> gsoClass = Class.forName("com.google.android.gms.auth.api.signin.GoogleSignInOptions");
             Class<?> gsoBuilderClass = Class.forName("com.google.android.gms.auth.api.signin.GoogleSignInOptions$Builder");
             
             Object defaultSignIn = gsoClass.getField("DEFAULT_SIGN_IN").get(null);
             Object builder = gsoBuilderClass.getConstructor(gsoClass).newInstance(defaultSignIn);
 
-            // Request Token untuk dilempar ke Firebase Web
             gsoBuilderClass.getMethod("requestIdToken", String.class).invoke(builder, webClientId);
             gsoBuilderClass.getMethod("requestEmail").invoke(builder);
             
@@ -51,16 +45,16 @@ public class TamodaGoogleAuth extends AndroidNonvisibleComponent implements Acti
 
             Class<?> clientClass = Class.forName("com.google.android.gms.auth.api.signin.GoogleSignInClient");
             
-            // Sign out paksa di awal biar user selalu bisa pilih email (Bisa ganti akun)
+            // Logout dulu biar user bisa ganti akun
             clientClass.getMethod("signOut").invoke(mGoogleSignInClient);
 
             Intent signInIntent = (Intent) clientClass.getMethod("getSignInIntent").invoke(mGoogleSignInClient);
             
-            container.$form().registerForActivityResult(this);
+            form.registerForActivityResult(this);
             activity.startActivityForResult(signInIntent, RC_SIGN_IN);
 
         } catch (Exception e) {
-            LoginFailed("Gagal inisialisasi GMS: " + e.getMessage());
+            LoginFailed("Init Error: " + e.getMessage());
         }
     }
 
@@ -72,7 +66,6 @@ public class TamodaGoogleAuth extends AndroidNonvisibleComponent implements Acti
                 Object task = gsClass.getMethod("getSignedInAccountFromIntent", Intent.class).invoke(null, data);
 
                 Class<?> taskClass = Class.forName("com.google.android.gms.tasks.Task");
-                
                 boolean isSuccessful = (boolean) taskClass.getMethod("isSuccessful").invoke(task);
                 
                 if (isSuccessful) {
@@ -85,15 +78,23 @@ public class TamodaGoogleAuth extends AndroidNonvisibleComponent implements Acti
                     
                     LoginSuccess(idToken != null ? idToken : "", email != null ? email : "", displayName != null ? displayName : "");
                 } else {
-                    LoginFailed("Login dibatalkan oleh user atau koneksi terputus.");
+                    // AMBIL KODE ERROR DARI EXCEPTION
+                    Object exception = taskClass.getMethod("getException").invoke(task);
+                    if (exception != null) {
+                        Class<?> apiExceptionClass = Class.forName("com.google.android.gms.common.api.ApiException");
+                        int statusCode = (int) apiExceptionClass.getMethod("getStatusCode").invoke(exception);
+                        LoginFailed("Google Error Code: " + statusCode);
+                    } else {
+                        LoginFailed("Login dibatalkan atau tidak ada respon.");
+                    }
                 }
             } catch (Exception e) {
-                LoginFailed("Gagal membaca akun: " + e.getMessage());
+                LoginFailed("Result Error: " + e.getMessage());
             }
         }
     }
 
-    @SimpleEvent(description = "Berhasil Login. Tangkap ID Token ini lalu lempar ke JavaScript (Web).")
+    @SimpleEvent(description = "Berhasil Login.")
     public void LoginSuccess(String idToken, String email, String nama) {
         EventDispatcher.dispatchEvent(this, "LoginSuccess", idToken, email, nama);
     }
@@ -101,17 +102,5 @@ public class TamodaGoogleAuth extends AndroidNonvisibleComponent implements Acti
     @SimpleEvent(description = "Gagal Login.")
     public void LoginFailed(String errorMessage) {
         EventDispatcher.dispatchEvent(this, "LoginFailed", errorMessage);
-    }
-    
-    @SimpleFunction(description = "Logout akun Google dari HP.")
-    public void Logout() {
-        try {
-            if (mGoogleSignInClient != null) {
-                Class<?> clientClass = Class.forName("com.google.android.gms.auth.api.signin.GoogleSignInClient");
-                clientClass.getMethod("signOut").invoke(mGoogleSignInClient);
-            }
-        } catch (Exception e) {
-            // Abaikan jika error
-        }
     }
 }
