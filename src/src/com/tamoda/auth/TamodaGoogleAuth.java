@@ -8,8 +8,8 @@ import com.google.appinventor.components.common.ComponentCategory;
 import com.google.appinventor.components.runtime.*;
 
 @DesignerComponent(
-    version = 2,
-    description = "Tamoda Google Auth V2 - Debug Mode. Menampilkan Kode Error jika gagal.",
+    version = 3,
+    description = "Tamoda Google Auth V3 - Fix Activity Result. Dijamin pasti ngerespon!",
     category = ComponentCategory.EXTENSION,
     nonVisible = true,
     iconName = ""
@@ -18,11 +18,15 @@ import com.google.appinventor.components.runtime.*;
 public class TamodaGoogleAuth extends AndroidNonvisibleComponent implements ActivityResultListener {
     
     private final Activity activity;
+    private ComponentContainer container;
     private Object mGoogleSignInClient;
-    private static final int RC_SIGN_IN = 9001;
+    
+    // KUNCI PERBAIKAN: Jangan pakai angka mati, biarkan Kodular yang ngasih nomor tiketnya
+    private int requestCode; 
 
     public TamodaGoogleAuth(ComponentContainer container) {
         super(container.$form());
+        this.container = container;
         this.activity = (Activity) container.$context();
     }
 
@@ -44,14 +48,16 @@ public class TamodaGoogleAuth extends AndroidNonvisibleComponent implements Acti
             mGoogleSignInClient = gsClass.getMethod("getClient", Activity.class, gsoClass).invoke(null, activity, gso);
 
             Class<?> clientClass = Class.forName("com.google.android.gms.auth.api.signin.GoogleSignInClient");
-            
-            // Logout dulu biar user bisa ganti akun
             clientClass.getMethod("signOut").invoke(mGoogleSignInClient);
 
             Intent signInIntent = (Intent) clientClass.getMethod("getSignInIntent").invoke(mGoogleSignInClient);
             
-            form.registerForActivityResult(this);
-            activity.startActivityForResult(signInIntent, RC_SIGN_IN);
+            // --- PERBAIKAN FATAL DI SINI ---
+            // Minta Kodular buatkan jalur khusus (Request Code) untuk ekstensi ini
+            this.requestCode = container.$form().registerForActivityResult(this);
+            
+            // Panggil Google dengan tiket resmi dari Kodular
+            activity.startActivityForResult(signInIntent, this.requestCode);
 
         } catch (Exception e) {
             LoginFailed("Init Error: " + e.getMessage());
@@ -59,8 +65,9 @@ public class TamodaGoogleAuth extends AndroidNonvisibleComponent implements Acti
     }
 
     @Override
-    public void resultReturned(int requestCode, int resultCode, Intent data) {
-        if (requestCode == RC_SIGN_IN) {
+    public void resultReturned(int reqCode, int resultCode, Intent data) {
+        // Cek apakah balasan ini beneran untuk ekstensi kita
+        if (reqCode == this.requestCode) {
             try {
                 Class<?> gsClass = Class.forName("com.google.android.gms.auth.api.signin.GoogleSignIn");
                 Object task = gsClass.getMethod("getSignedInAccountFromIntent", Intent.class).invoke(null, data);
@@ -78,14 +85,13 @@ public class TamodaGoogleAuth extends AndroidNonvisibleComponent implements Acti
                     
                     LoginSuccess(idToken != null ? idToken : "", email != null ? email : "", displayName != null ? displayName : "");
                 } else {
-                    // AMBIL KODE ERROR DARI EXCEPTION
                     Object exception = taskClass.getMethod("getException").invoke(task);
                     if (exception != null) {
                         Class<?> apiExceptionClass = Class.forName("com.google.android.gms.common.api.ApiException");
                         int statusCode = (int) apiExceptionClass.getMethod("getStatusCode").invoke(exception);
                         LoginFailed("Google Error Code: " + statusCode);
                     } else {
-                        LoginFailed("Login dibatalkan atau tidak ada respon.");
+                        LoginFailed("Login dibatalkan oleh user.");
                     }
                 }
             } catch (Exception e) {
